@@ -30,6 +30,25 @@ Add the dockerized forensic tools (Volatility 3, Plaso, …) when you want them:
 Other flags: `--no-model` (wire everything but skip the download), `--quick-verify` (skip the slow
 end-to-end model test). Run `./install.sh --help` for the list.
 
+### Run it from anywhere (optional)
+
+The installer drops a `dfir-copilot` launcher in the repo. If `~/.local/bin` is already on your
+`PATH`, it's symlinked there automatically and you can just type `dfir-copilot` from any directory.
+Otherwise, **from the repo directory**, add it to your `PATH` once (zsh is the macOS default shell):
+
+```bash
+echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
+```
+
+…or symlink the launcher into a directory already on your `PATH` (may prompt for `sudo`):
+
+```bash
+ln -sf "$PWD/dfir-copilot" /usr/local/bin/dfir-copilot
+```
+
+After either, `dfir-copilot query "…" artifact.csv` works from anywhere. The `./dfir-copilot` examples
+below also work as-is from inside the repo.
+
 > New here? The **[comprehensive user guide](USER_GUIDE.md)** covers everything — installation
 > details, every command, end-to-end investigation walkthroughs, how it decides things, how to
 > extend it, safety, limitations, and an FAQ.

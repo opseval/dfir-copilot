@@ -81,6 +81,21 @@ present and installs only what's missing. **Re-running is always safe.**
 - A launcher script `dfir-copilot/dfir-copilot`. If `~/.local/bin` is on your `PATH`, it's symlinked
   there so you can run `dfir-copilot` from anywhere; otherwise you run `./dfir-copilot`.
 
+**To call it from any directory yourself**, from the repo folder either add the repo to your `PATH`:
+
+```bash
+echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc   # zsh is the macOS default shell
+```
+
+or symlink the launcher into a directory already on your `PATH` (may prompt for `sudo`):
+
+```bash
+ln -sf "$PWD/dfir-copilot" /usr/local/bin/dfir-copilot
+```
+
+After either, `dfir-copilot query "…" artifact.csv` works from anywhere. (This guide's examples use
+`./dfir-copilot`, which works from inside the repo.)
+
 ### 2.4 Verifying
 
 ```bash
