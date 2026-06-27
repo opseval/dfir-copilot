@@ -77,7 +77,7 @@ volatility3 -f mem.raw windows.malfind | ./dfir-copilot triage
   you ──▶ dfir-copilot ──▶ small local model (Granite-4.1-3B, frozen)
                 │                │
                 │   QUERY path   ├─ M-Schema: real column types + sample values from the artifact
-                │                ├─ forensic dictionary: term → SQL-pattern cheat-sheet (RAG)
+                │                ├─ forensic dictionary: term → SQL-pattern cheat-sheet (curated, injected in-context)
                 │                ├─ constrained decoding: the model CAN'T emit a wrong table/column
                 │                └─ best-of-5 + self-consistency + execute-and-retry  → verified SQL
                 │

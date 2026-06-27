@@ -1,4 +1,4 @@
-"""Forensic SQL knowledge pack (RAG context) for the NL->DuckDB query engine.
+"""Forensic SQL knowledge pack (in-context grounding) for the NL->DuckDB query engine.
 
 Every pattern is GENERAL sshd / Linux-auth / log-analysis analyst knowledge -- the kind
 on a cheat-sheet -- or derives from the artifact's own columns. It encodes term->pattern
