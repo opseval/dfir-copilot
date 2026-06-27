@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment (created by install.sh)
+.venv/
+venv/
+
+# Generated launcher (machine-specific absolute paths; created by install.sh)
+/dfir-copilot
+
+# Local model / HF caches (never commit weights)
+*.gguf
+*.safetensors
+.cache/
+models/
+
+# macOS
+.DS_Store
