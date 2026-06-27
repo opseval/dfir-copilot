@@ -43,7 +43,7 @@ team move faster and miss less — but a human stays in the loop on every action
 
 **Why it's built this way:** an extensive local test campaign showed
 that fine-tuning a small model on forensic data *hurt* — the structured, untuned model beat the
-fine-tuned one 3.5× on held-out queries. So the intelligence lives in the harness (retrieval +
+fine-tuned one 3.5× on held-out queries. So the intelligence lives in the harness (grounding +
 constrained decoding + deterministic detectors), and the model is a frozen, swappable component.
 
 ---
