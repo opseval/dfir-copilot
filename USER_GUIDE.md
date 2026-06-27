@@ -18,6 +18,7 @@ rest of this document is here when you want depth.
 11. [Configuration](#11-configuration)
 12. [Troubleshooting](#12-troubleshooting)
 13. [FAQ](#13-faq)
+14. [Uninstalling](#14-uninstalling)
 
 ---
 
@@ -381,3 +382,40 @@ continued-pretraining pass is a ~$6–65 "coffee-break" run; a full execution-re
 
 **How do I teach it about a new tool or log type?** Add patterns to `copilot/domain_pack.py` and/or a
 detector to `copilot/preextract.py`. No retraining.
+
+---
+
+## 14. Uninstalling
+
+The co-pilot is self-contained: it installs into its own virtualenv and the standard Hugging Face model
+cache, and it never modifies your system Python. Removing it is a handful of deletes. **Run these from
+the repo directory.**
+
+```bash
+# 1. the virtualenv and the launcher (created by install.sh)
+rm -rf .venv dfir-copilot
+
+# 2. any PATH symlinks (the installer makes the ~/.local/bin one; you may have made the other)
+rm -f ~/.local/bin/dfir-copilot /usr/local/bin/dfir-copilot
+
+# 3. the downloaded model (~2.6 GB) from the shared Hugging Face cache
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--granite-4.1-3b-mxfp4
+```
+
+If you added the repo to your `PATH`, remove the line you appended to `~/.zshrc`
+(`export PATH="…/dfir-copilot:$PATH"`).
+
+If you installed the dockerized forensic tools (`./install.sh --with-tools`), remove their images
+(optional — these are shared Docker images):
+
+```bash
+docker rmi log2timeline/plaso:latest sk4la/volatility3:latest remnux/remnux-distro:focal
+```
+
+Finally, delete the repo directory itself.
+
+**What the uninstall deliberately leaves alone:** Homebrew, Python, git, Docker Desktop, and Rosetta 2
+are shared system tools. `install.sh` installed them only if they were missing, but other software may
+now depend on them — remove those yourself only if you're certain nothing else needs them. (If you set a
+custom `DFIR_MODEL`, delete that model's directory under `~/.cache/huggingface/hub/` instead of the
+Granite one in step 3.)

@@ -139,6 +139,30 @@ The installer handles the rest.
 
 ---
 
+## Uninstall
+
+The co-pilot is self-contained — it installs into its own virtualenv and the standard model cache and
+never touches your system Python. To remove it cleanly, **from inside the repo**:
+
+```bash
+rm -rf .venv dfir-copilot                                     # virtualenv + launcher
+rm -f  ~/.local/bin/dfir-copilot /usr/local/bin/dfir-copilot  # any PATH symlinks
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--granite-4.1-3b-mxfp4   # the model (~2.6 GB)
+```
+
+If you added the repo to your `PATH`, also delete that `export PATH=…` line from `~/.zshrc`. If you
+installed the dockerized tools (`--with-tools`), drop their images (optional):
+
+```bash
+docker rmi log2timeline/plaso:latest sk4la/volatility3:latest remnux/remnux-distro:focal
+```
+
+Then delete the repo directory. Homebrew, Python, Docker Desktop, and Rosetta are shared system tools —
+the installer only added them if missing; remove those only if nothing else uses them. Full detail:
+[USER_GUIDE.md › Uninstalling](USER_GUIDE.md#14-uninstalling).
+
+---
+
 ## What's in here
 
 | Path | What |
