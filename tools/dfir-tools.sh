@@ -19,7 +19,10 @@ IMG_PLASO="${DFIR_IMG_PLASO:-log2timeline/plaso:latest}"
 IMG_VOL3="${DFIR_IMG_VOL3:-sk4la/volatility3:latest}"
 IMG_REMNUX="${DFIR_IMG_REMNUX:-remnux/remnux-distro:focal}"
 
-need_docker() { command -v docker >/dev/null 2>&1 || { echo "Docker not found. Install Docker Desktop (./install.sh --with-tools)."; exit 1; }; }
+need_docker() {
+  command -v docker >/dev/null 2>&1 || { echo "No docker CLI found. Run ./install.sh --with-tools (sets up Colima, or uses an existing Docker engine)."; exit 1; }
+  docker info >/dev/null 2>&1 || { echo "Container engine not running. Start it with 'colima start' (Colima) or by opening Docker Desktop."; exit 1; }
+}
 runc() { # runc <image> <args...> : run a tool against $PWD mounted read-only at /data
   need_docker
   local img="$1"; shift

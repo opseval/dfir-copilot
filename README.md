@@ -122,7 +122,9 @@ fine-tuning, which this project showed actively hurts).
 
 - **macOS on Apple Silicon** (M1/M2/M3/M4). Intel works but is slow.
 - ~**4 GB** free disk for the model + deps; **16 GB** unified memory is plenty (the model peaks ~2.75 GB).
-- **Docker Desktop** only if you want the dockerized forensic tools (`--with-tools`).
+- **A container runtime** only if you want the dockerized forensic tools (`--with-tools`). It prefers an
+  existing Colima or Docker Desktop, and installs **[Colima](https://github.com/abiosoft/colima)** (free,
+  open-source, no subscription) if neither is present.
 
 The installer handles the rest.
 
@@ -131,7 +133,7 @@ The installer handles the rest.
 ## Troubleshooting
 
 - **`brew` asks for a password** on a fresh machine — that's Homebrew's own installer; it's expected.
-- **Docker tools say "engine not running"** — open Docker Desktop once, then `./install.sh --with-tools`.
+- **Docker tools say "engine not running"** — start your engine (`colima start`, or open Docker Desktop), then `./install.sh --with-tools`.
 - **First query is slow** (~30-60 s) — that's the one-time model load; subsequent calls are fast.
 - **`mlx` aborts on import** — handled automatically (`copilot/config.py` disables MPI auto-load), but
   if you hit it in your own scripts, `export MLX_MPI_LIBNAME=libmpi_disabled_does_not_exist.dylib`.
@@ -157,9 +159,12 @@ installed the dockerized tools (`--with-tools`), drop their images (optional):
 docker rmi log2timeline/plaso:latest sk4la/volatility3:latest remnux/remnux-distro:focal
 ```
 
-Then delete the repo directory. Homebrew, Python, Docker Desktop, and Rosetta are shared system tools —
-the installer only added them if missing; remove those only if nothing else uses them. Full detail:
-[USER_GUIDE.md › Uninstalling](USER_GUIDE.md#14-uninstalling).
+If the installer set up Colima for you (and nothing else uses it), remove it too:
+`colima stop && colima delete && brew uninstall colima docker`.
+
+Then delete the repo directory. Homebrew, Python, the container runtime (Colima/Docker Desktop), and
+Rosetta are shared system tools — the installer only added them if missing; remove those only if nothing
+else uses them. Full detail: [USER_GUIDE.md › Uninstalling](USER_GUIDE.md#14-uninstalling).
 
 ---
 

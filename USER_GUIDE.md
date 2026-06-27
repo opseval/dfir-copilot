@@ -68,7 +68,7 @@ present and installs only what's missing. **Re-running is always safe.**
 | Flag | Effect |
 |---|---|
 | (none) | Install the co-pilot "brain" (model + structure stack) and verify it. |
-| `--with-tools` | Also install Docker Desktop, Rosetta 2 (for amd64 tools), and pull the forensic-tool images. |
+| `--with-tools` | Set up a container runtime (prefers an existing Colima or Docker Desktop; installs **Colima** if neither is found), Rosetta 2 (for amd64 tools), and pull the forensic-tool images. |
 | `--no-model` | Wire everything up but skip the model download (e.g., to pre-stage on a metered connection). |
 | `--quick-verify` | Skip the slow end-to-end model test during verification. |
 | `--help` | Show usage. |
@@ -281,7 +281,9 @@ memory), so the default is the right call for a 16 GB machine — but the knob i
 
 After `./install.sh --with-tools`, the dockerized tools are available through the `tools` subcommand.
 They run against files in your **current directory**, mounted **read-only** at `/data` inside the
-container, so the tool can read evidence but cannot modify it.
+container, so the tool can read evidence but cannot modify it. The container engine is **Colima** by
+default (free/open-source) — or an existing Docker Desktop — set up by `--with-tools`; if neither is
+present, the installer installs and starts Colima (with Rosetta on Apple Silicon).
 
 ```bash
 cd /path/to/case/artifacts
@@ -353,7 +355,7 @@ Set these as environment variables before running (all optional):
 | Symptom | Fix |
 |---|---|
 | `brew` asks for a password (fresh Mac) | Expected — it's Homebrew's installer, not ours. |
-| "Docker engine not running" | Open Docker Desktop once, then `./install.sh --with-tools`. |
+| Container engine not running | `colima start` (Colima), or open Docker Desktop, then `./install.sh --with-tools`. |
 | First query hangs ~30–60 s | One-time model load; subsequent calls in the same session are fast. |
 | `mlx` aborts on import in your own scripts | `export MLX_MPI_LIBNAME=libmpi_disabled_does_not_exist.dylib` (the package sets this itself). |
 | A query returns "could not produce a verified query" | Rephrase more concretely, or check the artifact has the columns you assume. The shown error tells you what failed. |
@@ -412,10 +414,16 @@ If you installed the dockerized forensic tools (`./install.sh --with-tools`), re
 docker rmi log2timeline/plaso:latest sk4la/volatility3:latest remnux/remnux-distro:focal
 ```
 
+If `--with-tools` installed Colima for you (and nothing else uses it), remove it too:
+
+```bash
+colima stop && colima delete && brew uninstall colima docker
+```
+
 Finally, delete the repo directory itself.
 
-**What the uninstall deliberately leaves alone:** Homebrew, Python, git, Docker Desktop, and Rosetta 2
-are shared system tools. `install.sh` installed them only if they were missing, but other software may
+**What the uninstall deliberately leaves alone:** Homebrew, Python, git, the container runtime (Colima
+or Docker Desktop), and Rosetta 2 are shared system tools. `install.sh` installed them only if they were missing, but other software may
 now depend on them — remove those yourself only if you're certain nothing else needs them. (If you set a
 custom `DFIR_MODEL`, delete that model's directory under `~/.cache/huggingface/hub/` instead of the
 Granite one in step 3.)

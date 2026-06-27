@@ -3,7 +3,7 @@
 # DFIR co-pilot — one-command installer for macOS (fresh or existing).
 #
 #   ./install.sh                 install the co-pilot brain (model + structure stack) and verify
-#   ./install.sh --with-tools    also set up Docker + the dockerized DFIR tools (Volatility, Plaso, ...)
+#   ./install.sh --with-tools    also set up a container runtime (Colima, or an existing Docker) + the dockerized DFIR tools (Volatility, Plaso, ...)
 #   ./install.sh --no-model      skip the model download (wire everything else)
 #   ./install.sh --quick-verify  skip the slow end-to-end model test
 #
@@ -112,22 +112,65 @@ fi
 
 # ---------------------------------------------------------------- 6. optional: Docker + DFIR tools
 if [ "$WITH_TOOLS" = "1" ]; then
-  step "Dockerized DFIR tools (optional)"
+  step "Container runtime + dockerized DFIR tools (optional)"
+
+  # Rosetta 2 — fast amd64 emulation for the amd64 tool images (Colima --vz-rosetta or Docker Desktop).
   if [ "$ARCH" = "arm64" ]; then
     if /usr/bin/pgrep -q oahd 2>/dev/null; then ok "Rosetta 2 present (for amd64 tools)"
     else info "installing Rosetta 2 (for amd64 EZTools/REMnux containers)..."; softwareupdate --install-rosetta --agree-to-license || warn "Rosetta install skipped/failed"; fi
   fi
-  if ! command -v docker >/dev/null 2>&1; then
-    info "Docker not found — installing Docker Desktop (cask)..."
-    brew install --cask docker || warn "Docker Desktop install failed — install it manually from docker.com"
-    warn "Open Docker Desktop once to start the engine, then re-run: ./install.sh --with-tools"
-  fi
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    info "pulling DFIR tool images (large; first pull is slow)..."
-    bash "$REPO/tools/dfir-tools.sh" pull || warn "some tool images failed to pull (see above)"
-    ok "DFIR tool images ready"
+
+  # Pick a container runtime: prefer an EXISTING Colima, then a running/installed Docker engine
+  # (Docker Desktop or compatible), else install Colima (open-source/MIT — no Docker Desktop subscription).
+  RUNTIME=""
+  if command -v colima >/dev/null 2>&1; then
+    RUNTIME="colima"; info "using existing Colima runtime"
+  elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    RUNTIME="docker"; ok "using the running Docker engine (Docker Desktop or compatible)"
+  elif [ -d "/Applications/Docker.app" ]; then
+    RUNTIME="docker"; info "Docker Desktop is installed (engine not running yet)"
   else
-    warn "Docker engine not running — start Docker Desktop, then: ./install.sh --with-tools"
+    info "no container runtime found — installing Colima (open-source, no Docker Desktop subscription)..."
+    brew install colima docker || warn "Colima install failed — install Colima (or Docker) manually"
+    RUNTIME="colima"
+  fi
+
+  # Colima drives the engine through the standalone docker CLI client; make sure it's present.
+  if [ "$RUNTIME" = "colima" ] && ! command -v docker >/dev/null 2>&1; then
+    info "installing the docker CLI client (for Colima)..."; brew install docker || warn "docker CLI install failed"
+  fi
+
+  # Bring the engine up.
+  if [ "$RUNTIME" = "colima" ]; then
+    if colima status >/dev/null 2>&1; then ok "Colima already running"
+    else
+      info "starting Colima..."
+      if [ "$ARCH" = "arm64" ]; then
+        colima start --vm-type vz --vz-rosetta 2>/dev/null || colima start || warn "colima start failed — run 'colima start' manually"
+      else
+        colima start || warn "colima start failed — run 'colima start' manually"
+      fi
+    fi
+    docker context use colima >/dev/null 2>&1 || true   # make sure the docker CLI targets Colima
+  fi
+
+  # Pull the tool images once the SELECTED engine is actually reachable. For Colima we require
+  # `colima status` too, so we never silently pull into a different engine (e.g. a running Docker
+  # Desktop) when Colima was chosen but failed to start.
+  ENGINE_UP=0
+  if [ "$RUNTIME" = "colima" ]; then
+    colima status >/dev/null 2>&1 && docker info >/dev/null 2>&1 && ENGINE_UP=1
+  else
+    docker info >/dev/null 2>&1 && ENGINE_UP=1
+  fi
+  if [ "$ENGINE_UP" = "1" ]; then
+    info "pulling DFIR tool images (large; first pull is slow)..."
+    if bash "$REPO/tools/dfir-tools.sh" pull; then ok "DFIR tool images ready"
+    else warn "some tool images failed to pull (see above)"; fi
+  elif [ "$RUNTIME" = "docker" ]; then
+    warn "Docker engine not running — open Docker Desktop (or start your engine), then: ./install.sh --with-tools"
+  else
+    warn "Colima not reachable — run 'colima start', then: ./install.sh --with-tools"
   fi
 else
   info "Skipping dockerized DFIR tools. Add them anytime with: ./install.sh --with-tools"
