@@ -90,6 +90,25 @@ volatility3 -f mem.raw windows.malfind | ./dfir-copilot triage
 
 ---
 
+## What you'd actually use it for
+
+**Who it's for:** a mixed-experience security team — from a tier-1 SOC analyst who isn't a forensics specialist, up to a seasoned DFIR examiner. It **raises the floor** (juniors miss less and move faster) without slowing the experts down. It is strictly **advisory**: it drafts and explains; you approve and run everything.
+
+Two concrete jobs, matching the two modes above:
+
+**1. Ask a question about an artifact in plain English (query mode).** You have a parsed log or tool export as a CSV — an SSH auth log, a Windows event-log export, an EZTools artifact, a Plaso timeline — and a question you'd otherwise hand-write SQL for. You ask in plain English; it writes the query, runs it **read-only**, and shows you *both* the answer and the exact SQL, so you can confirm it asked what you meant before trusting the number. Typical questions:
+- "How many failed password attempts are in this auth log?"
+- "Which single source IP has the most events, and how many?"
+- "How many distinct usernames were tried in invalid-user attempts?"
+
+**2. Triage whether tool output is interesting (triage mode).** You pipe the raw output of a forensic tool — a Volatility memory scan, a Plaso timeline, an event-log dump — into it and get back a **verdict** (`MALICIOUS` / `SUSPICIOUS` / `BENIGN` / `UNDETERMINED`), the specific **indicators** found with the evidence for each, and the **suggested next commands**. For example, a Volatility `malfind` hit showing an executable-and-writable region inside `lsass.exe` comes back `MALICIOUS`, names the indicator, and suggests dumping the region and pivoting to the network and process-tree views — so a junior doesn't already have to know how to read `malfind`.
+
+**The workflow is always the same shape:** **drafts → you approve → the tool runs read-only → you feed the output back** into the next triage or query. A human is in the loop on every action.
+
+**What it is *not*:** not an autonomous agent that runs investigations by itself, not a malware sandbox or detonation platform, and not a substitute for an analyst's judgment. It handles the common, well-trodden **80%** quickly so you can spend your attention on the hard **20%**.
+
+---
+
 ## How it works (the short version)
 
 ```
@@ -115,6 +134,45 @@ volatility3 -f mem.raw windows.malfind | ./dfir-copilot triage
 Want to broaden coverage to a new artifact type? Add patterns to
 `copilot/domain_pack.py` — that's the cheap, $0 way to teach new domain semantics (far better than
 fine-tuning, which this project showed actively hurts).
+
+---
+
+## What "the scaffolding" actually is, in plain terms
+
+"Scaffolding" (or "structure") means **the ordinary, rule-based software wrapped around the model** — the part that does the reliable work. A mental picture: the untuned model is a *fast but over-confident junior* who will happily write something that looks authoritative even when it's wrong. The scaffolding is what a good senior puts in front of that junior. Each piece, and the failure it prevents:
+
+**For drafting queries**
+
+- **The schema sheet ("M-Schema").** Before the model writes anything, the software reads the *actual* artifact and hands it the real column names, types, and a few sample values. *Without it* the model invents columns; *with it* it can see that `Content` literally contains `"Failed password for invalid user…"` and filter on that. (`copilot/schema.py`)
+- **The forensic phrasebook (domain dictionary).** A hand-curated cheat-sheet mapping an analyst's concepts to the right query pattern (*"invalid user"* → the exact `LIKE` filter), supplied as **editable text, not baked into the model** — this is the file you grow over time instead of retraining. (`copilot/domain_pack.py`)
+- **The stencil (constrained decoding).** The model's output is forced to fit valid SQL using only columns that exist in *this* file, so emitting a wrong table or invented column is **physically impossible** — the single biggest reliability win, and exactly what fine-tuning kept getting wrong. (`copilot/grammar.py`)
+- **Ask-five-and-check (best-of-N + self-consistency + execute-and-retry).** It drafts several candidate queries, **actually runs each one**, keeps the answer the most candidates agree on, and on failure feeds the database's own error back and retries — so a wrong outlier gets out-voted and a query that doesn't run can't masquerade as correct. (`copilot/query_engine.py`)
+
+**For interpreting tool output**
+
+- **The detector bank (deterministic rules).** Plain, auditable rules scan tool output for known danger signs (Office spawning a script host, executable-writable memory in `lsass`, persistence registry keys, specific Windows Event IDs, webshell writes, …). **The model is not involved in the verdict at all.** If no rule matches, it returns `UNDETERMINED — manual review` rather than guessing. (`copilot/preextract.py`, `copilot/triage.py`)
+- **The narrator (optional).** Only *after* the rules have decided does the model get a turn — to write a readable summary of what the rules found. Its prose is advisory color; the verdict belongs to the rules. (`copilot/interp_engine.py`)
+
+**Read-only by construction**
+
+There is no write path to evidence anywhere in the product: the query side is restricted to read-only `SELECT` (the constrained-decoding grammar enforces it), and the dockerized forensic tools run against evidence mounted **read-only**. Combined with *you approve before anything runs*, evidence cannot be altered in normal operation.
+
+The thread through all of it: **anything that has to be *correct* is owned by deterministic, auditable code; the model is only ever a drafter and narrator on top.** That's why swapping in a different base model barely changes the results — the reliability was never coming from the model's "brain."
+
+---
+
+## Honest limitations
+
+Most of these are deliberate consequences of the "structure beats weights" design, not rough edges to be filed off later.
+
+- **The model never makes the call — by design.** Trust the deterministic verdict and the *shown* SQL; treat any model prose as color, not authority.
+- **It adapts to new file *layouts*, not new *meaning*.** Point it at a CSV it has never seen and it reads the columns and writes valid SQL. But what's *forensically interesting* in a given artifact type comes from the curated phrasebook and detectors — on an uncovered type it still produces valid, runnable queries but may filter on the wrong thing. It degrades gracefully (wrong-but-valid, or "undetermined") rather than failing loudly. The fix is a few lines of curation in `copilot/domain_pack.py`, **never** retraining.
+- **Interpretation only covers patterns someone has written a rule for.** A genuinely novel technique with no matching detector returns `UNDETERMINED — manual review`. That's the *safe* failure mode (never a confident wrong "all-clear"), but coverage is only as broad as the rules you've written, and it grows by adding detectors.
+- **It's a small model, by requirement.** It reliably handles common, well-trodden questions; for unusual multi-step analytical reasoning, write the SQL yourself or escalate to a larger model. It does the routine 80%, not the senior-examiner 20%.
+- **Scope is single, structured artifacts.** Query mode works on one CSV-shaped artifact at a time; it does not correlate across many sources for you, build the timeline itself, or do dynamic / malware-detonation analysis.
+- **It only ever advises; a human must act.** Every tool command is proposed for approval and run by the analyst; nothing executes autonomously.
+- **Operational limits.** Apple-Silicon Macs (via MLX); the model loads once per session (~30–60 s on the first call, fast thereafter); and it peaks ~2.75 GB of memory, so watch your RAM if you run other large local models alongside the forensic tools.
+- **Coverage is an ongoing curation commitment.** Because the intelligence lives in editable files (the dictionary and detectors), the system is only as good as the team keeps them current — transparent and **$0** to extend, but a continuing *human* responsibility, not something the model improves on its own.
 
 ---
 
