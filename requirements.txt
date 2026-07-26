@@ -2,6 +2,6 @@
 # The co-pilot "brain": a small local model made reliable by constrained decoding + RAG.
 mlx-lm>=0.28
 outlines[mlxlm]>=1.3.0
-llguidance>=1.7.0
+llguidance>=1.7.6
 duckdb>=1.1.0
 huggingface_hub>=0.26.0
