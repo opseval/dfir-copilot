@@ -1,0 +1,34 @@
+# .github/dependabot.yml
+#
+# Weekly dependency updates. Generated from this repo's actual manifest
+# locations -- every `directory` below points at a real manifest, so
+# Dependabot does not silently no-op on a path that does not exist.
+#
+# Minor and patch updates are GROUPED into a single PR per ecosystem per
+# week to keep the queue reviewable; major bumps still arrive individually
+# because they deserve to be looked at on their own.
+#
+# Note that Dependabot SECURITY updates (driven by advisories) fire
+# regardless of this file. This config adds the scheduled, stay-current
+# half that was missing.
+
+version: 2
+
+updates:
+  # Python: root
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "pip"
+    commit-message:
+      prefix: "deps(pip)"
+      include: "scope"
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
