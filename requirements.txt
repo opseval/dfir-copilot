@@ -1,6 +1,6 @@
 # DFIR co-pilot — Python dependencies (Apple Silicon / MLX).
 # The co-pilot "brain": a small local model made reliable by constrained decoding + RAG.
-mlx-lm>=0.28
+mlx-lm>=0.31.3
 outlines[mlxlm]>=1.3.0
 llguidance>=1.7.0
 duckdb>=1.1.0
