@@ -90,6 +90,22 @@ PY
   ok "model ready"
 fi
 
+# ---------------------------------------------------------------- 4b. Apple on-device model (optional, macOS 27+)
+step "Apple on-device model (optional)"
+if command -v fm >/dev/null 2>&1; then
+  if fm license --status 2>/dev/null | grep -q '^Agreed'; then
+    if fm available --model system 2>&1 | grep -qi '^System model available'; then
+      ok "Apple Foundation Models available — routine questions route through it (~3 s); Granite is the fallback"
+    else
+      warn "Apple Foundation Models not available on this Mac (turn on Apple Intelligence to enable); the Granite path is used"
+    fi
+  else
+    info "run 'fm license' once to enable the Apple on-device model (optional); until then the Granite path is used"
+  fi
+else
+  info "no 'fm' on this macOS (needs macOS 27+); the Granite path is used"
+fi
+
 # ---------------------------------------------------------------- 5. launcher
 step "Command launcher"
 LAUNCH="$REPO/dfir-copilot"

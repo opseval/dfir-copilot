@@ -16,7 +16,7 @@ sys.path.insert(0, HERE)
 import copilot.config  # noqa: E402  -- sets MLX env first
 
 SAMPLE = os.path.join(HERE, "copilot", "sample", "auth_sample.csv")
-PASS, FAIL = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m"
+PASS, FAIL, WARN = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m", "\033[33mWARN\033[0m"
 results = []
 
 
@@ -28,6 +28,16 @@ def check(name, fn):
     except Exception as e:
         print(f"  [{FAIL}] {name}\n         {type(e).__name__}: {str(e)[:160]}")
         results.append(False)
+
+
+def warn_check(name, fn):
+    """Informational only: the optional Apple backend must never fail an install (it can be absent,
+    switched off by device management, or change with an OS update); the Granite path stands."""
+    try:
+        msg = fn()
+        print(f"  [{PASS}] {name}" + (f"  ({msg})" if msg else ""))
+    except Exception as e:
+        print(f"  [{WARN}] {name}\n         {type(e).__name__}: {str(e)[:160]}")
 
 
 def t_imports():
@@ -52,9 +62,55 @@ def t_triage():
     assert out["findings"], "no findings extracted"
 
 
+def t_catalog():
+    """Every plan the intent catalog accepts becomes ONE SELECT that executes on the sample artifact. No model."""
+    from copilot import catalog as C
+    from copilot.schema import execute
+    n = 0
+    for q in ("How many events are there in total?", "How many 'Accepted' lines are there?",
+              "Which source IP appears most often?", "How many 'session opened' events for the root user?"):
+        for ef in C.EVENT_FILTERS:
+            for ex in C.EXTRACTS:
+                for ag in C.AGGREGATES:
+                    plan = {"event_filter": ef, "extract_field": ex, "aggregate": ag}
+                    if C.validate(plan, q)[0] is None:
+                        continue
+                    sql = C.plan_to_sql(plan, q, os.path.basename(SAMPLE))
+                    assert sql.startswith("SELECT "), sql
+                    _, err = execute(sql, os.path.dirname(SAMPLE))
+                    assert err is None, f"{plan}: {err}"
+                    n += 1
+    assert n > 0, "no valid plans"
+
+
+def t_afm():
+    """Optional on-device Apple model (macOS 27+): reports availability; never required."""
+    from copilot import afm
+    ok, reason = afm.available(refresh=True)
+    if not ok:
+        raise RuntimeError(f"unavailable: {reason} -- the Granite path is used instead")
+    return reason
+
+
+def t_router():
+    """Optional: the Apple router sends the README sample question to the catalog and matches DuckDB."""
+    from copilot import afm
+    from copilot.query_engine import answer
+    from copilot.schema import execute
+    ok, reason = afm.available(refresh=True)
+    if not ok:
+        raise RuntimeError(f"skipped: {reason}")
+    res = answer("how many failed password attempts are there?", SAMPLE, backend="afm")
+    assert res["ok"], f"router fell through: {res.get('error')}"
+    truth, _ = execute("SELECT count(*) FROM read_csv_auto('auth_sample.csv') WHERE Content LIKE '%Failed password%' "
+                       "AND Content NOT LIKE '%message repeated%'", os.path.dirname(SAMPLE))
+    assert res["result"] == truth, f"catalog result {res['result']} != DuckDB truth {truth}"
+    return f"path={res['path']}, result={res['result']}, votes={res['votes']}"
+
+
 def t_model_query():
     from copilot.query_engine import answer
-    res = answer("How many total log events are there?", SAMPLE)
+    res = answer("How many total log events are there?", SAMPLE, backend="granite")
     assert res["ok"], f"query engine could not produce a verified query: {res.get('error')}"
     assert "SELECT" in (res["sql"] or "").upper(), f"unexpected sql: {res['sql']}"
 
@@ -66,6 +122,9 @@ def main():
     check("dependencies import (mlx_lm, outlines, duckdb, llguidance)", t_imports)
     check("DuckDB reads the sample artifact", t_duckdb)
     check("deterministic pre-extraction + triage verdict", t_triage)
+    check("intent catalog: every plan is one executing SELECT (no model)", t_catalog)
+    warn_check("Apple Foundation Models on-device backend (optional)", t_afm)
+    warn_check("Apple router -> intent catalog on the sample question (optional)", t_router)
     if quick:
         print("  [skip] model + constrained query (--quick)")
     else:

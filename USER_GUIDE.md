@@ -34,9 +34,15 @@ runs **entirely on your Mac**. It does two things well:
   export) into it and it returns a verdict, the concrete indicators it found, and the suggested next
   commands.
 
-**The operating principle, in one line:** *the model drafts, a deterministic harness decides, and
-you approve.* The small model is never trusted to make the call on its own — it proposes, and rules
+**The operating principle, in one line:** *the models draft, a deterministic harness decides, and
+you approve.* No small model is ever trusted to make the call on its own — it proposes, and rules
 + execution + your judgment dispose.
+
+**Two models, fixed roles.** On macOS 27 the co-pilot uses Apple's built-in on-device model for two
+narrow jobs: routing a question into the intent catalog (it only picks among options; the harness
+writes the SQL) and narrating findings. The frozen Granite-4.1-3B model is the only one that writes
+free-form SQL, and only under a grammar. If Apple's model is absent, off, or unsure, everything falls
+through to Granite.
 
 **What it is not:** it is not an autonomous agent that runs forensic tools by itself, not a malware
 sandbox, and not a replacement for an analyst. It raises the floor — it helps a mixed-experience SOC
@@ -103,9 +109,12 @@ After either, `dfir-copilot query "…" artifact.csv` works from anywhere. (This
 ./dfir-copilot verify
 ```
 
-This runs four checks: dependencies import, DuckDB reads a sample artifact, deterministic triage
-produces a correct verdict, and the model loads and constrained decoding produces a real, executing
-query. All four should say `PASS`. (Add `--quick` to skip the slow model check.)
+This runs the hard checks — dependencies import, DuckDB reads a sample artifact, deterministic triage
+produces a correct verdict, every intent-catalog plan becomes one executing `SELECT`, and Granite loads
+and constrained decoding produces a real, executing query — plus two informational ones for Apple's
+on-device model (availability, and routing the sample question). The hard checks must say `PASS`; the
+Apple ones say `WARN` on a Mac that can't use it, which never fails the install. (Add `--quick` to skip
+the slow Granite check.) Unit tests: `pip install -r requirements-dev.txt && pytest`.
 
 ---
 
@@ -120,9 +129,19 @@ EZTools `.csv` export, a Plaso `psort` CSV) and a question.
 ./dfir-copilot query "<your question>" <artifact.csv>
 ```
 
-The co-pilot reads the artifact's real schema and sample values, writes a DuckDB query, runs it
-(read-only), and prints the SQL, the result, and a self-consistency score (how many of its samples
-agreed). **You read the SQL and decide whether to trust the number.**
+Two things can happen, and the output says which (`path: catalog` or `path: granite`):
+
+- **Routed (catalog).** If the artifact is a type the catalog knows and Apple's on-device model
+  recognises the question as one of the catalog's intents (two votes must agree), the harness writes
+  the SQL from a template, runs it, and prints the SQL, a **`meaning:`** line in plain English saying
+  exactly what was counted, and the result — in about three seconds, without loading Granite.
+- **Granite.** Otherwise the co-pilot reads the artifact's real schema and sample values, has Granite
+  write a DuckDB query under the grammar, runs it (read-only), and prints the SQL, the result, and a
+  self-consistency score (how many of its samples agreed).
+
+**You read the SQL and decide whether to trust the number.** Add `--cross-check` to run both paths on
+a routed question and see whether two independent methods agree; `--backend granite|auto|afm` picks a
+path explicitly.
 
 ### Triage mode — verdicts from raw tool output
 
@@ -145,22 +164,34 @@ comes from the rules).
 
 ## 4. Command reference
 
-### `query "<question>" <artifact.csv>`
-Draft and verify a DuckDB query over a CSV artifact.
+### `query "<question>" <artifact.csv> [--backend auto|granite|afm] [--cross-check]`
+Answer a question over a CSV artifact with a verified, read-only DuckDB query.
 - **Input:** a natural-language question, and a path to a CSV file.
-- **Output:** the SQL, the executed result, and the self-consistency vote (`votes=4/5`).
+- **Output:** the path taken (`catalog` or `granite`), the SQL, the executed result, a `meaning:` line
+  (catalog path) and the agreement (`2/2 router votes`, or the Granite self-consistency vote `4/5`).
+- **`--backend`:** `auto` (default: Apple router first, Granite for everything else), `granite`
+  (never call Apple's model), `afm` (Apple only; errors instead of falling through — for evaluation).
+- **`--cross-check`:** on a routed answer, also run Granite and print `AGREE` or `DISAGREE` with the
+  other query and result. Disagreement means read both before trusting either.
 - **Exit code:** `0` if a verified query was produced, `2` if not.
-- **Notes:** the first call loads the model (~30–60 s); later calls are fast. The query is always
-  read-only. If it can't produce a working query it tells you the last error rather than guessing.
+- **Notes:** a routed question takes ~3 s; the first Granite call loads the model (~30–60 s), later
+  ones are fast. If it can't produce a working query it tells you the last error rather than guessing.
+
+### `backends`
+Show which models this Mac can use right now: Apple's on-device model (available or why not, licence
+status, OS build) and Granite (model id, cached or not). Loads nothing.
 
 ### `triage [file]`
 Deterministic verdict + findings from tool output. Reads `file` or stdin.
 - **Output:** verdict, priority finding + rationale, all findings with evidence, suggested next commands.
 - **No model.** Fast and offline. The safe default for "is this interesting?"
 
-### `narrate [file]`
+### `narrate [file] [--backend auto|granite|afm]`
 Same as `triage`, plus an optional model-written prose summary grounded in the deterministic findings.
-- The verdict from the rules is authoritative; the narration is advisory color.
+- The verdict from the rules is authoritative; the narration is advisory color. The last line says who
+  narrated (`[narrated by afm]` or `granite`). Apple's model answers in 2–3 s; Granite is the fallback.
+- The prompt is bounded: the findings plus an excerpt of the tool output that keeps the lines carrying
+  evidence first, so a huge dump still narrates.
 
 ### `verify [--quick]`
 Run the install smoke tests. `--quick` skips the slow model check.
@@ -222,7 +253,27 @@ to triage or query.**
 
 Understanding this is what lets you trust the output.
 
-### Query path (the "draft" intelligence)
+### Query path — routing first (deterministic + Apple's model)
+0. **Family and vocabulary.** The harness looks at the CSV header and scans the data for the words
+   the catalog knows (`Failed password`, `rhost=`, …). No catalog for this artifact → straight to
+   Granite. Otherwise Apple's on-device model is shown the full catalog of options and asked which
+   filter, which extracted field and which aggregate answer the question. It answers twice (greedy,
+   then sampled); the two must agree after validation, or the question goes to Granite. The harness
+   then checks the choice against the artifact and against the analyst's own words: a chosen filter
+   whose words never occur in this file is rejected; a question that names a kind of event ("failed
+   password"), a field ("source IP" or "rhost", "username", "EventId"), "distinct" or "most" pins that
+   part of the plan, a filter other than "all events" must be named in the question or in a quoted
+   phrase, and a field must be one its lines can carry — so two votes agreeing on a plausible-but-wrong
+   plan are still declined. Anything the analyst
+   quotes, and whether the question is about `root`, is taken from the question by the harness, never
+   from the model. The harness also declines what the catalog cannot represent — a negation ("except",
+   "without"), an account other than root, an unquoted literal value (an IP, a host name, a number),
+   a time window, a comparison or an aggregate it lacks ("least", "average", "ratio"), several kinds
+   of event at once, or a listing / per-group result — so those questions go to Granite rather than
+   getting an answer to a slightly different question. Templates then write one `SELECT` and a
+   plain-English explanation. A template that fails to run also falls through.
+
+### Query path — Granite (the "draft" intelligence)
 1. **M-Schema.** It reads the artifact's real columns, types, and a few sample cell values, and puts
    them in the model's context. Seeing `Content` actually contains `"Failed password for invalid
    user ..."` is what teaches it to filter with `LIKE`, not invent a column.
@@ -245,7 +296,8 @@ Understanding this is what lets you trust the output.
 
 **Why the model never owns the verdict:** in testing, the model *with* the findings still over-called
 benign activity as malicious (false positives), while the deterministic rules got 11/12 with zero
-dangerous misses. So the rules decide; the model, at most, narrates.
+dangerous misses. So the rules decide; a model, at most, narrates — Apple's on-device model first
+(fast, nothing to load), Granite when it is unavailable.
 
 ---
 
@@ -264,6 +316,13 @@ Edit `copilot/domain_pack.py` → `DOMAIN_DICT`. Add lines mapping a concept to 
 
 Keep them **general** (real analyst knowledge, not tied to one case's answer). New patterns take
 effect immediately — no retraining.
+
+### Add an intent to the catalog
+`copilot/catalog.py` holds the same patterns as data so the router can offer them as options: an
+`EventFilter` (the substrings a line must contain, a description for the model, a label for the
+explanation, and a canonical `root_form` where one exists) or an `Extract` (a regex with one capture
+group, or a column). Add the matching line to `DOMAIN_DICT` too — a unit test fails if the two drift
+apart. A new artifact family is a header fingerprint in `copilot/family.py` plus its own catalog.
 
 ### Add triage detectors
 Edit `copilot/preextract.py` — add a detector function that appends a finding `{indicator, evidence,
@@ -330,8 +389,16 @@ Knowing these keeps you out of trouble.
 - **Triage covers known patterns.** The 14 detectors catch well-established indicators; a novel TTP
   with no matching detector returns `UNDETERMINED` (safe, but it means "look yourself"). Add detectors
   as your coverage needs grow.
-- **First call latency.** The model loads once per process (~30–60 s); batch your questions in a
-  session rather than one process per question if latency matters.
+- **First call latency.** Granite loads once per process (~30–60 s); a routed question does not load
+  it (a declined route or `--cross-check` does), so on a Mac with Apple's model the routine questions
+  answer in seconds.
+- **Apple's model is optional, and not pinned.** It needs macOS 27 with Apple Intelligence on, can be
+  switched off by device management, and changes with OS updates (every routed answer records the OS
+  build; re-run `verify` after an upgrade). The router only takes questions it is sure about (two
+  votes must agree, filters must occur in the data); everything else is Granite's, exactly as before.
+- **The `fm` tool has its own terms.** Apple's CLI ties use of its model to the macOS licence and
+  asks you to agree once (`fm license`). The co-pilot pins the on-device model and never uses Apple's
+  cloud model.
 
 ---
 
@@ -346,6 +413,13 @@ Set these as environment variables before running (all optional):
 | `DFIR_MAX_RETRIES` | `3` | execute-and-retry rounds on failure |
 | `DFIR_TEMP` | `0.5` | sampling temperature for the non-greedy candidates |
 | `DFIR_MAX_TOKENS` | `256` | max tokens per generated query |
+| `DFIR_SEED` | unset | seed Granite's sampler for reproducible candidates (evaluation runs) |
+| `DFIR_BACKEND` | `auto` | `auto` (Apple router first, Granite fallback), `granite`, or `afm` (Apple only) |
+| `DFIR_FM_BIN` | `/usr/bin/fm` | Apple's CLI; point it at a fake to test the fall-through |
+| `DFIR_AFM_TIMEOUT` / `DFIR_AFM_PROBE_TIMEOUT` | `30` / `10` | seconds per Apple generation / availability check |
+| `DFIR_AFM_GUARDRAILS` | `permissive-content-transformations` | Apple guardrail level for narration and routing |
+| `DFIR_ROUTER_VOTES` | `2` | routing votes that must agree (greedy + sampled) |
+| `DFIR_NARRATE_MAX_CHARS` | `6000` | tool-output budget in the narration prompt |
 | `DFIR_IMG_VOL3` / `DFIR_IMG_PLASO` / `DFIR_IMG_REMNUX` | see `tools/dfir-tools.sh` | override tool images |
 
 ---
@@ -356,7 +430,10 @@ Set these as environment variables before running (all optional):
 |---|---|
 | `brew` asks for a password (fresh Mac) | Expected — it's Homebrew's installer, not ours. |
 | Container engine not running | `colima start` (Colima), or open Docker Desktop, then `./install.sh --with-tools`. |
-| First query hangs ~30–60 s | One-time model load; subsequent calls in the same session are fast. |
+| First query hangs ~30–60 s | One-time Granite load; routed questions skip it, and later Granite calls in the same session are fast. |
+| `backends` says Apple's model is unavailable | Run `fm license` once, turn on Apple Intelligence (macOS 27+), or ignore it — Granite answers everything. |
+| `path: granite` on a question you expected routed | The `router: declined -- …` line says why: the two votes disagreed, the filter's words aren't in this file, or the question has a qualifier the catalog can't represent (a negation, another account, an unquoted IP/host/number, a time window — quote a literal value to match it as text). Nothing is lost; Granite answered. |
+| `--cross-check` prints `DISAGREE` | The two paths computed different results. Read both queries; the difference is usually an ambiguity in the question (e.g. whether "message repeated" summary lines count). |
 | `mlx` aborts on import in your own scripts | `export MLX_MPI_LIBNAME=libmpi_disabled_does_not_exist.dylib` (the package sets this itself). |
 | A query returns "could not produce a verified query" | Rephrase more concretely, or check the artifact has the columns you assume. The shown error tells you what failed. |
 | Re-install needed | `./install.sh` is idempotent — just run it again. |
@@ -366,7 +443,8 @@ Set these as environment variables before running (all optional):
 
 ## 13. FAQ
 
-**Does anything leave my machine?** No. The model and all processing are local.
+**Does anything leave my machine?** No. Both models run on-device and all processing is local. Apple's
+model is pinned to the on-device `system` model; Apple's cloud model is never used.
 
 **Can I run it on Intel Mac / Linux?** It targets Apple Silicon + MLX. Intel works but is slow; Linux
 is out of scope for the installer (the structure stack itself is portable if you bring your own MLX/

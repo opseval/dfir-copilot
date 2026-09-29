@@ -1,0 +1,2 @@
+# Development-only dependencies (unit tests). The product itself needs only requirements.txt.
+pytest>=8

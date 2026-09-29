@@ -1,9 +1,11 @@
 # DFIR Co-Pilot
 
 An **advisory** digital-forensics/incident-response co-pilot that runs entirely on your Mac.
-A small local model (Granite-4.1-3B via Apple MLX) **drafts** DuckDB queries and **narrates**
-tool output; a deterministic harness **owns correctness**; and **you approve** before anything
-is acted on. It fits a 16 GB MacBook Air with room to spare for the forensic tools.
+Two small on-device models do the drafting — Apple's built-in model (macOS 27) **routes** a
+plain-English question into a curated intent catalog and **narrates** findings, and a frozen
+Granite-4.1-3B (via Apple MLX) **drafts** free-form DuckDB queries under a grammar — while a
+deterministic harness **owns correctness**, and **you approve** before anything is acted on. It fits
+a 16 GB MacBook Air with room to spare for the forensic tools.
 
 It is built on one hard-won result: with the right *structure* around it, an **untuned** 3B model
 beats a fine-tuned one **3.5×** on held-out forensic queries — so we ship the base model frozen
@@ -57,11 +59,15 @@ below also work as-is from inside the repo.
 
 ## Use
 
-**Draft a query over a CSV artifact** (the model writes the SQL, runs it read-only, shows you the
-result and the query to approve):
+**Ask a question about a CSV artifact** (a routine question is routed through the intent catalog and
+answered from deterministic SQL in ~3 s, with a plain-English line saying what the query computes;
+anything else goes to Granite, which writes the SQL under a grammar; either way it runs read-only and
+shows you the result and the query to approve):
 
 ```bash
 ./dfir-copilot query "how many failed password attempts are there?" copilot/sample/auth_sample.csv
+./dfir-copilot query "which single source IP has the most events?" auth.csv --cross-check   # both paths, flag disagreement
+./dfir-copilot backends                                                                     # which models this Mac can use
 ```
 
 **Triage tool output** (deterministic verdict + findings + suggested next commands — no model needed):
@@ -112,24 +118,35 @@ Two concrete jobs, matching the two modes above:
 ## How it works (the short version)
 
 ```
-  you ──▶ dfir-copilot ──▶ small local model (Granite-4.1-3B, frozen)
-                │                │
-                │   QUERY path   ├─ M-Schema: real column types + sample values from the artifact
-                │                ├─ forensic dictionary: term → SQL-pattern cheat-sheet (curated, injected in-context)
-                │                ├─ constrained decoding: the model CAN'T emit a wrong table/column
-                │                └─ best-of-5 + self-consistency + execute-and-retry  → verified SQL
-                │
-                │   TRIAGE path  ├─ pre-extraction: 14 deterministic detectors over tool output
-                │                └─ triage: verdict from the highest-severity finding (model only narrates)
-                ▼
+  you ──▶ dfir-copilot
+              │
+              │   QUERY path
+              │     ├─ artifact family: deterministic (header fingerprint + the words actually in the data)
+              │     ├─ in the catalog?  Apple's on-device model picks an INTENT — enums only, two votes must agree —
+              │     │      and the harness writes the SQL from templates, plus a plain-English explanation   (~3 s)
+              │     └─ otherwise Granite-4.1-3B (frozen) under the grammar:
+              │            M-Schema (real column types + sample values) + forensic dictionary (curated cheat-sheet)
+              │            + constrained decoding (it CAN'T emit a wrong table/column)
+              │            + best-of-5 + self-consistency + execute-and-retry  → verified SQL
+              │
+              │   TRIAGE path
+              │     ├─ pre-extraction: 14 deterministic detectors over tool output
+              │     └─ triage: verdict from the highest-severity finding; a model only narrates (Apple first, Granite fallback)
+              ▼
         you approve ──▶ run the command in a dockerized tool
 ```
 
-- **The model drafts; the harness decides; you approve.** The model never owns a verdict (it
-  over-calls); the deterministic rules do.
-- **Constrained decoding** is the key lever for queries — it makes corrupted table names and
-  invented columns structurally impossible, which is what fine-tuning kept getting wrong.
-- **Everything is local.** No data leaves the machine.
+- **The models draft; the harness decides; you approve.** No model ever owns a verdict (they
+  over-call); the deterministic rules do.
+- **Two models, fixed roles.** Apple's model only ever chooses among catalog options or narrates
+  findings — it never writes a SQL value and never touches a verdict. Granite is the only model that
+  writes SQL, and only under the grammar. Whenever Apple's model is unavailable (older macOS, Apple
+  Intelligence off, a timeout, or a question the router isn't sure about) the co-pilot falls through
+  to Granite: the same workflow and the same guarantees, with Granite's SQL and result — which can
+  differ from the catalog's on the questions the two paths read differently — and its load time.
+- **Constrained decoding** is the key lever for free-form queries — it makes corrupted table names
+  and invented columns structurally impossible, which is what fine-tuning kept getting wrong.
+- **Everything is local.** No data leaves the machine; Apple's cloud model is never used.
 
 Want to broaden coverage to a new artifact type? Add patterns to
 `copilot/domain_pack.py` — that's the cheap, $0 way to teach new domain semantics (far better than
@@ -145,6 +162,7 @@ fine-tuning, which this project showed actively hurts).
 
 - **The schema sheet ("M-Schema").** Before the model writes anything, the software reads the *actual* artifact and hands it the real column names, types, and a few sample values. *Without it* the model invents columns; *with it* it can see that `Content` literally contains `"Failed password for invalid user…"` and filter on that. (`copilot/schema.py`)
 - **The forensic phrasebook (domain dictionary).** A hand-curated cheat-sheet mapping an analyst's concepts to the right query pattern (*"invalid user"* → the exact `LIKE` filter), supplied as **editable text, not baked into the model** — this is the file you grow over time instead of retraining. (`copilot/domain_pack.py`)
+- **The intent catalog (the phrasebook as data).** The same patterns, structured so that software can fill them in: Apple's on-device model is shown the catalog's *options* (which kind of line, what to pull out, how to aggregate — and and picks one; the harness rejects a choice whose words do not occur in the artifact; two votes must agree; then plain templates write the SQL and a one-line explanation. The model never writes a value, so the dictionary's discipline rules (drop syslog "message repeated" wrappers, ignore empty extractions) are applied every time. A test keeps catalog and phrasebook in lock-step. (`copilot/catalog.py`, `copilot/router.py`, `copilot/family.py`)
 - **The stencil (constrained decoding).** The model's output is forced to fit valid SQL using only columns that exist in *this* file, so emitting a wrong table or invented column is **physically impossible** — the single biggest reliability win, and exactly what fine-tuning kept getting wrong. (`copilot/grammar.py`)
 - **Ask-five-and-check (best-of-N + self-consistency + execute-and-retry).** It drafts several candidate queries, **actually runs each one**, keeps the answer the most candidates agree on, and on failure feeds the database's own error back and retries — so a wrong outlier gets out-voted and a query that doesn't run can't masquerade as correct. (`copilot/query_engine.py`)
 
@@ -171,7 +189,8 @@ Most of these are deliberate consequences of the "structure beats weights" desig
 - **It's a small model, by requirement.** It reliably handles common, well-trodden questions; for unusual multi-step analytical reasoning, write the SQL yourself or escalate to a larger model. It does the routine 80%, not the senior-examiner 20%.
 - **Scope is single, structured artifacts.** Query mode works on one CSV-shaped artifact at a time; it does not correlate across many sources for you, build the timeline itself, or do dynamic / malware-detonation analysis.
 - **It only ever advises; a human must act.** Every tool command is proposed for approval and run by the analyst; nothing executes autonomously.
-- **Operational limits.** Apple-Silicon Macs (via MLX); the model loads once per session (~30–60 s on the first call, fast thereafter); and it peaks ~2.75 GB of memory, so watch your RAM if you run other large local models alongside the forensic tools.
+- **Operational limits.** Apple-Silicon Macs (via MLX); Granite loads once per session (~30–60 s on the first call, fast thereafter) and peaks ~2.75 GB of memory, so watch your RAM if you run other large local models alongside the forensic tools. A routed question does not load it; a declined route or `--cross-check` does.
+- **Apple's model is optional and can change under you.** The routed path needs macOS 27 with Apple Intelligence on; a managed Mac may have it switched off, and the model updates with the OS rather than being pinned like Granite — so every routed answer records the OS build it came from, and `dfir-copilot backends` shows what is active. The `fm` tool's terms tie its use to the macOS licence; read them once (`fm license`). Without it, everything still works through Granite.
 - **Coverage is an ongoing curation commitment.** Because the intelligence lives in editable files (the dictionary and detectors), the system is only as good as the team keeps them current — transparent and **$0** to extend, but a continuing *human* responsibility, not something the model improves on its own.
 
 ---
@@ -179,7 +198,8 @@ Most of these are deliberate consequences of the "structure beats weights" desig
 ## Requirements
 
 - **macOS on Apple Silicon** (M1/M2/M3/M4). Intel works but is slow.
-- ~**4 GB** free disk for the model + deps; **16 GB** unified memory is plenty (the model peaks ~2.75 GB).
+- **macOS 27 with Apple Intelligence enabled** for the fast routed path (optional — everything works without it).
+- ~**4 GB** free disk for the model + deps; **16 GB** unified memory is plenty (Granite peaks ~2.75 GB; Apple's model costs nothing extra).
 - **A container runtime** only if you want the dockerized forensic tools (`--with-tools`). It prefers an
   existing Colima or Docker Desktop, and installs **[Colima](https://github.com/abiosoft/colima)** (free,
   open-source, no subscription) if neither is present.
@@ -192,7 +212,8 @@ The installer handles the rest.
 
 - **`brew` asks for a password** on a fresh machine — that's Homebrew's own installer; it's expected.
 - **Docker tools say "engine not running"** — start your engine (`colima start`, or open Docker Desktop), then `./install.sh --with-tools`.
-- **First query is slow** (~30-60 s) — that's the one-time model load; subsequent calls are fast.
+- **First query is slow** (~30-60 s) — that's the one-time Granite load; routed questions skip it, and subsequent Granite calls in a process are fast.
+- **`backends` says the Apple model is unavailable** — run `fm license` once, turn on Apple Intelligence (macOS 27+), or just carry on: the Granite path answers everything, only slower.
 - **`mlx` aborts on import** — handled automatically (`copilot/config.py` disables MPI auto-load), but
   if you hit it in your own scripts, `export MLX_MPI_LIBNAME=libmpi_disabled_does_not_exist.dylib`.
 - **Re-running the installer** is always safe — it skips what's already done.
@@ -232,5 +253,6 @@ else uses them. Full detail: [USER_GUIDE.md › Uninstalling](USER_GUIDE.md#14-u
 |---|---|
 | `install.sh` | the one-command installer + self-test |
 | `verify.py` | the smoke-test suite |
-| `copilot/` | the product: query engine, interpretation engine, grammar, forensic dictionary, CLI |
+| `copilot/` | the product: query engine (Apple router + intent catalog, Granite grammar path), interpretation engine, forensic dictionary, CLI |
+| `tests/` | unit tests (`pytest`; no model needed — a fake `fm` stands in for Apple's CLI) |
 | `tools/dfir-tools.sh` | Docker wrappers for Volatility 3 / Plaso / REMnux |

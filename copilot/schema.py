@@ -14,6 +14,14 @@ def _q(s):
     return str(s).replace("'", "''")
 
 
+sql_literal = _q
+
+
+def table_literal(csv_path):
+    """The one table the co-pilot ever reads: read_csv_auto('<file>'), resolved via file_search_path."""
+    return f"read_csv_auto('{_q(csv_path)}')"
+
+
 def _ident(name):
     """Escape a DuckDB identifier (double any embedded double-quotes)."""
     return '"' + str(name).replace('"', '""') + '"'
