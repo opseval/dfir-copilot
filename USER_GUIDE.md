@@ -177,6 +177,16 @@ Answer a question over a CSV artifact with a verified, read-only DuckDB query.
 - **Notes:** a routed question takes ~3 s; the first Granite call loads the model (~30–60 s), later
   ones are fast. If it can't produce a working query it tells you the last error rather than guessing.
 
+### `ocr <image> [-o file]`
+Transcribe a screenshot or photo of tool output with Apple's Vision framework and print the text (or
+write it to `file`). No language model is involved: hex dumps, base64 blobs and pipe names come out
+as written, which is what the triage detectors need — a language model "reading" the image would
+paraphrase them. It is best-effort OCR all the same (a blurry photo can drop or swap a character), so
+read the text before relying on a verdict built on it. Phone photos are read the way they display
+(EXIF orientation is honoured); `-o` refuses to overwrite the input image. Typical use:
+`./dfir-copilot ocr shot.png | ./dfir-copilot triage`. Needs macOS (the `pyobjc-framework-Vision`
+binding is installed by `install.sh`); elsewhere it explains why it can't run.
+
 ### `backends`
 Show which models this Mac can use right now: Apple's on-device model (available or why not, licence
 status, OS build) and Granite (model id, cached or not). Loads nothing.
@@ -234,6 +244,18 @@ and suggests dumping the region and pivoting to `windows.netscan`/`windows.pstre
 ```bash
 ./dfir-copilot tools vol3 -f /data/mem.raw windows.pstree | ./dfir-copilot triage
 ```
+
+### 5.2b A photo of a screen
+
+An analyst sends you a phone photo of a locked workstation's console, or pastes a screenshot into a
+ticket. Transcribe it and triage the text exactly as you would the tool's own output:
+
+```bash
+./dfir-copilot ocr console_photo.jpg | ./dfir-copilot triage
+```
+
+No language model touches the text, so nothing is paraphrased or invented — but it is OCR: read it
+before you trust a verdict on it (a blurry photo can drop or swap a character in a hash or an address).
 
 ### 5.3 Timeline pivot with Plaso
 

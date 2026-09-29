@@ -4,6 +4,7 @@
   dfir-copilot query "<question>" <artifact.csv>   draft + verify a DuckDB query (read-only)
   dfir-copilot triage <tool_output.txt>            deterministic verdict + findings (no model)
   dfir-copilot narrate <tool_output.txt>           optional grounded model summary
+  dfir-copilot ocr <image> [-o out.txt]            transcribe a screenshot of tool output (no language model) -> pipe into triage
   dfir-copilot backends                            which model backends this Mac can use
   dfir-copilot verify                              run the install smoke tests
   dfir-copilot tools ...                           run a dockerized DFIR tool (see tools/dfir-tools.sh)
@@ -112,6 +113,36 @@ def cmd_narrate(args):
     return 0
 
 
+def cmd_ocr(args):
+    """Screenshot / photo of tool output -> text with Apple's Vision framework (best-effort OCR; no language model).
+    Pipe the result into `triage`."""
+    from .ocr import OCRUnavailable, ocr
+    if args.out:
+        try:                                    # never write over the evidence image (also via links)
+            if os.path.exists(args.out) and os.path.samefile(args.out, args.image):
+                print("Error: the output path is the input image; choose another file", file=sys.stderr)
+                return 2
+        except OSError as e:
+            print(f"Error: cannot check {args.out}: {e}", file=sys.stderr)
+            return 2
+    try:
+        text = ocr(args.image)
+    except OCRUnavailable as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.out:
+        try:
+            with open(args.out, "w") as fh:
+                fh.write(text + "\n")
+        except OSError as e:
+            print(f"Error: cannot write {args.out}: {e}", file=sys.stderr)
+            return 2
+        print(f"wrote {len(text.splitlines())} lines to {args.out}", file=sys.stderr)
+    else:
+        print(text)
+    return 0
+
+
 def cmd_backends(args):
     """Report which backends this Mac can use right now. Loads no model."""
     from . import afm, config
@@ -164,6 +195,10 @@ def main(argv=None):
     n.add_argument("--backend", choices=["auto", "granite", "afm"], default=None,
                    help="who narrates: auto = Apple first, Granite fallback (default: DFIR_BACKEND)")
     n.set_defaults(fn=cmd_narrate)
+
+    o = sub.add_parser("ocr", help="transcribe a screenshot or photo of tool output (Vision.framework; no language model)")
+    o.add_argument("image"); o.add_argument("-o", "--out", help="write the text here instead of stdout")
+    o.set_defaults(fn=cmd_ocr)
 
     b = sub.add_parser("backends", help="show which model backends this Mac can use"); b.set_defaults(fn=cmd_backends)
 

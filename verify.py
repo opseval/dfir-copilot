@@ -108,6 +108,15 @@ def t_router():
     return f"path={res['path']}, result={res['result']}, votes={res['votes']}"
 
 
+def t_ocr():
+    """Optional: Vision.framework transcribes the committed screenshot fixture (no language model)."""
+    from copilot.ocr import ocr
+    text = ocr(os.path.join(HERE, "copilot", "sample", "ocr_sample.jpg"))
+    for token in ("173.234.31.186", "POSSIBLE BREAK-IN ATTEMPT"):
+        assert token in text, f"{token!r} not recognised in the fixture"
+    return f"{len(text.splitlines())} lines"
+
+
 def t_model_query():
     from copilot.query_engine import answer
     res = answer("How many total log events are there?", SAMPLE, backend="granite")
@@ -125,6 +134,7 @@ def main():
     check("intent catalog: every plan is one executing SELECT (no model)", t_catalog)
     warn_check("Apple Foundation Models on-device backend (optional)", t_afm)
     warn_check("Apple router -> intent catalog on the sample question (optional)", t_router)
+    warn_check("Vision.framework OCR of a screenshot (optional)", t_ocr)
     if quick:
         print("  [skip] model + constrained query (--quick)")
     else:

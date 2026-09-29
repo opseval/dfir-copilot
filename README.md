@@ -82,6 +82,15 @@ volatility3 -f mem.raw windows.malfind | ./dfir-copilot triage
 ./dfir-copilot narrate suspicious_output.txt
 ```
 
+**Triage a screenshot or photo of tool output** (a console someone photographed, a screenshot pasted into
+a ticket): Apple's Vision framework transcribes it with no language model in the loop — hex and encoded
+blobs come through as written rather than paraphrased — and the text goes into triage. It is still OCR:
+read the transcription before relying on a verdict built on it.
+
+```bash
+./dfir-copilot ocr screenshot.png | ./dfir-copilot triage
+```
+
 **Run a forensic tool** the co-pilot drafted a command for (after `--with-tools`):
 
 ```bash
@@ -253,6 +262,6 @@ else uses them. Full detail: [USER_GUIDE.md › Uninstalling](USER_GUIDE.md#14-u
 |---|---|
 | `install.sh` | the one-command installer + self-test |
 | `verify.py` | the smoke-test suite |
-| `copilot/` | the product: query engine (Apple router + intent catalog, Granite grammar path), interpretation engine, forensic dictionary, CLI |
+| `copilot/` | the product: query engine (Apple router + intent catalog, Granite grammar path), interpretation engine, forensic dictionary, Vision OCR, CLI |
 | `tests/` | unit tests (`pytest`; no model needed — a fake `fm` stands in for Apple's CLI) |
 | `tools/dfir-tools.sh` | Docker wrappers for Volatility 3 / Plaso / REMnux |
