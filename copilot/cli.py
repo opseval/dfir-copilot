@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""dfir-copilot -- analyst-facing command line.
+"""clue -- the analyst-facing command line (the launcher is also linked as `dfir-copilot`).
 
-  dfir-copilot query "<question>" <artifact.csv>   draft + verify a DuckDB query (read-only)
-  dfir-copilot triage <tool_output.txt>            deterministic verdict + findings (no model)
-  dfir-copilot narrate <tool_output.txt>           optional grounded model summary
-  dfir-copilot ocr <image> [-o out.txt]            transcribe a screenshot of tool output (no language model) -> pipe into triage
-  dfir-copilot backends                            which model backends this Mac can use
-  dfir-copilot verify                              run the install smoke tests
-  dfir-copilot tools ...                           run a dockerized DFIR tool (see tools/dfir-tools.sh)
+  clue                                     the cheat sheet below
+  clue query "<question>" <artifact.csv>   answer a plain-English question with a verified, read-only query
+  clue triage <tool_output.txt>            deterministic verdict + findings (no model)
+  clue narrate <tool_output.txt>           the verdict plus a short grounded model summary
+  clue ocr <image> [-o out.txt]            transcribe a screenshot of tool output (no language model) -> pipe into triage
+  clue backends                            which model backends this Mac can use
+  clue verify                              run the install smoke tests
+  clue tools ...                           run a dockerized DFIR tool read-only (see tools/dfir-tools.sh)
 
 Design: the model DRAFTS, the deterministic harness owns correctness, the analyst APPROVES.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -55,9 +57,56 @@ def _print_query(res, question, artifact):
         print("  -> Try rephrasing, or check the artifact/columns.\n")
 
 
+_DATA_EXT = {".csv", ".tsv", ".txt", ".log", ".gz", ".json", ".parquet"}
+
+
+def _pathiness(s):
+    """How much a `query` positional looks like the artifact: 2 = an existing regular file; 1 = path-like
+    (ends in a data-file extension, spaces or not, or is a single token with a path separator); 0 = neither."""
+    if os.path.isfile(s):
+        return 2
+    if os.path.splitext(s)[1].lower() in _DATA_EXT or (os.sep in s and not re.search(r"\s", s)):
+        return 1
+    return 0
+
+
+def _sentence(s):
+    """Prose, not a path: contains whitespace and is neither an existing file nor path-like. A string
+    that ends in a data-file extension is never a sentence, so `"missing artifact.csv"` stays a path."""
+    return bool(re.search(r"\s", s)) and _pathiness(s) == 0
+
+
+def _is_glob(s):
+    return any(c in s for c in "*?[")
+
+
 def cmd_query(args):
+    import duckdb
     from . import config
+    from . import schema as S
+    from .grammar import columns_of
     from .query_engine import answer
+    # The file may come first. Rule (USER_GUIDE § 4): swap only when the artifact slot holds a sentence
+    # (whitespace, and not a file or a path-like token) and the question slot holds a file or a path-like
+    # token. Every other combination keeps the documented order (question first), so a mistyped
+    # artifact -- `typo.csv`, or a bare `missing` -- is reported as such, never displaced by a guess.
+    if _sentence(args.artifact) and _pathiness(args.question) > 0:
+        args.question, args.artifact = args.artifact, args.question
+    # Anything that is not a regular file is reported here, before any model loads. A directory is
+    # never read implicitly (even one named like a glob); glob patterns are left to DuckDB to expand.
+    if os.path.isdir(args.artifact):
+        print(f"Error: artifact is a directory: {args.artifact} (pass a file, or a pattern such as "
+              f"'{args.artifact.rstrip(os.sep)}/*.csv')", file=sys.stderr)
+        return 2
+    if not os.path.isfile(args.artifact) and not _is_glob(args.artifact):
+        print(f"Error: artifact not found: {args.artifact}", file=sys.stderr)
+        return 2
+    try:                                            # DuckDB must be able to read it -- before any model loads
+        search_path, csv = S.split_path(args.artifact)
+        columns_of(csv, search_path)
+    except duckdb.Error as e:                       # empty glob, not a CSV, unreadable: one line, no traceback
+        print(f"Error: could not read {args.artifact}: {str(e).strip().splitlines()[0]}", file=sys.stderr)
+        return 2
     backend = args.backend or config.BACKEND
     if backend == "granite":
         print("  loading model + building schema grammar (first call is slowest)...", flush=True)
@@ -67,7 +116,11 @@ def cmd_query(args):
     else:
         print("  backend=auto: Apple router first; Granite loads (~30-60 s) only if the router declines"
               + (" or for the cross-check" if args.cross_check else "") + "...", flush=True)
-    res = answer(args.question, args.artifact, backend=backend, cross_check=args.cross_check)
+    try:
+        res = answer(args.question, args.artifact, backend=backend, cross_check=args.cross_check)
+    except duckdb.Error as e:                       # backstop: the artifact changed under us, or a new read path
+        print(f"Error: could not read {args.artifact}: {str(e).strip().splitlines()[0]}", file=sys.stderr)
+        return 2
     _print_query(res, args.question, args.artifact)
     return 0 if res["ok"] else 2
 
@@ -166,7 +219,10 @@ def cmd_backends(args):
 
 
 def cmd_verify(args):
-    return subprocess.call([sys.executable, os.path.join(_ROOT, "verify.py")])
+    argv = [sys.executable, os.path.join(_ROOT, "verify.py")]
+    if args.quick:
+        argv.append("--quick")
+    return subprocess.call(argv)
 
 
 def cmd_tools(args):
@@ -174,9 +230,33 @@ def cmd_tools(args):
     return subprocess.call([script] + args.rest)
 
 
+def cheatsheet(prog):
+    """What `clue` on its own prints: the handful of things you do with it, one line each."""
+    return f"""
+  {prog} — advisory DFIR co-pilot. Everything runs on this Mac; it drafts, you approve.
+
+    {prog} query "<question>" <artifact.csv>     ask a plain-English question of a CSV artifact
+                                                (the file may come first; the SQL is shown for approval)
+    <tool> ... | {prog} triage                    verdict + findings from tool output (deterministic, no model)
+    {prog} narrate <output.txt>                  the verdict plus a short grounded summary
+    {prog} ocr <screenshot.png> | {prog} triage    transcribe a screenshot or photo of tool output, then triage it
+    {prog} backends                              what this Mac can use (Apple on-device model, Granite)
+    {prog} verify                                self-test the install
+    {prog} tools vol3|plaso|remnux ...           run a dockerized forensic tool read-only (after --with-tools)
+
+  Add --help to any command for its options.
+"""
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="dfir-copilot", description="Advisory DFIR co-pilot (local, MLX).")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    # the launcher exports the name it was invoked by (`clue` or `dfir-copilot`) so help reads naturally;
+    # anything that is not a plain command name is ignored (argparse prints prog verbatim)
+    prog = os.environ.get("DFIR_PROG") or ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", prog):
+        prog = "dfir-copilot"
+    p = argparse.ArgumentParser(prog=prog, description="Advisory DFIR co-pilot (local, MLX).",
+                                epilog=f"run `{prog}` with no arguments for the cheat sheet")
+    sub = p.add_subparsers(dest="cmd")
 
     q = sub.add_parser("query", help="draft + verify a DuckDB query over a CSV artifact")
     q.add_argument("question"); q.add_argument("artifact")
@@ -202,12 +282,17 @@ def main(argv=None):
 
     b = sub.add_parser("backends", help="show which model backends this Mac can use"); b.set_defaults(fn=cmd_backends)
 
-    v = sub.add_parser("verify", help="run install smoke tests"); v.set_defaults(fn=cmd_verify)
+    v = sub.add_parser("verify", help="run install smoke tests")
+    v.add_argument("--quick", action="store_true", help="skip the slow model test")
+    v.set_defaults(fn=cmd_verify)
 
     to = sub.add_parser("tools", help="run a dockerized DFIR tool")
     to.add_argument("rest", nargs=argparse.REMAINDER); to.set_defaults(fn=cmd_tools)
 
     args = p.parse_args(argv)
+    if not args.cmd:                                # `clue` alone is a question, not a mistake
+        print(cheatsheet(prog))
+        return 0
     return args.fn(args)
 
 

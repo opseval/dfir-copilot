@@ -169,7 +169,7 @@ def answer(question, artifact_csv, backend=None, cross_check=False):
                 prov = {"backend": "afm"}
             return {"result": None, "sql": None, "votes": None, "ok": False, "path": None, "plan": None,
                     "explanation": None, "provenance": prov, "decline_reason": why,
-                    "error": f"Apple backend declined: {why} (see `dfir-copilot backends`)"}
+                    "error": f"Apple backend declined: {why} (see `clue backends`)"}
         res = _answer_granite(question, artifact_csv)
         res["decline_reason"] = why
         return res

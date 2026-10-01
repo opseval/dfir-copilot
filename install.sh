@@ -106,25 +106,37 @@ else
   info "no 'fm' on this macOS (needs macOS 27+); the Granite path is used"
 fi
 
-# ---------------------------------------------------------------- 5. launcher
+# ---------------------------------------------------------------- 5. launcher + short name
 step "Command launcher"
 LAUNCH="$REPO/dfir-copilot"
+ALIAS="${DFIR_ALIAS-clue}"          # the short global name (export DFIR_ALIAS= to skip it)
 cat > "$LAUNCH" <<EOF
 #!/usr/bin/env bash
 # auto-generated launcher: run the co-pilot inside its venv, from anywhere
+export DFIR_PROG="\$(basename "\$0")"   # so --help shows the name you typed (clue or dfir-copilot)
 source "$VENV/bin/activate"
 export PYTHONPATH="$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python -m copilot.cli "\$@"
 EOF
 chmod +x "$LAUNCH" || die "could not create launcher at $LAUNCH"
 ok "created ./dfir-copilot"
-# offer a PATH symlink into ~/.local/bin if that dir is on PATH
-if echo ":$PATH:" | grep -q ":$HOME/.local/bin:"; then
-  mkdir -p "$HOME/.local/bin"; ln -sf "$LAUNCH" "$HOME/.local/bin/dfir-copilot"
-  ok "linked into ~/.local/bin (run 'dfir-copilot' from anywhere)"
-else
-  info "to call it from anywhere, add this repo to PATH or: ln -sf '$LAUNCH' /usr/local/bin/dfir-copilot"
-fi
+# Put it on PATH without sudo or shell-rc edits (tools/link-launcher.sh: ~/.local/bin if on PATH and
+# writable, else Homebrew's bin dir; never overwrites something that is not ours).
+GLOBAL_NAME=""                       # set only when every requested name is actually on PATH
+LINKERR="$(mktemp)"
+LINKDIR="$(bash "$REPO/tools/link-launcher.sh" "$LAUNCH" "$ALIAS" 2>"$LINKERR")"; LINKRC=$?
+case "$LINKRC" in
+  0) GLOBAL_NAME="${ALIAS:-dfir-copilot}"
+     ok "linked into $LINKDIR — run '${GLOBAL_NAME}'$([ -n "$ALIAS" ] && echo " (or 'dfir-copilot')") from anywhere" ;;
+  1) warn "linked into $LINKDIR, but: $(tr '\n' ' ' < "$LINKERR")"
+     info "rename or remove what is in the way, then re-run ./install.sh" ;;
+  2) LINKMSG="$(tr '\n' ' ' < "$LINKERR")"; rm -f "$LINKERR"
+     die "${LINKMSG}(set DFIR_ALIAS to a plain name, or DFIR_ALIAS= to skip it)" ;;
+  *) info "$(tr '\n' ' ' < "$LINKERR")"
+     info "to call it from anywhere, link the launcher into a directory on your PATH, e.g.:"
+     info "  [ -e /usr/local/bin/${ALIAS:-dfir-copilot} ] || sudo ln -s '$LAUNCH' /usr/local/bin/${ALIAS:-dfir-copilot}" ;;
+esac
+rm -f "$LINKERR"
 
 # ---------------------------------------------------------------- 6. optional: Docker + DFIR tools
 if [ "$WITH_TOOLS" = "1" ]; then
@@ -196,13 +208,15 @@ fi
 step "Verifying the installation"
 VERIFY_ARGS=""; [ "$QUICK_VERIFY" = "1" ] && VERIFY_ARGS="--quick"
 if python "$REPO/verify.py" $VERIFY_ARGS; then
+  CMD="${GLOBAL_NAME:-./dfir-copilot}"     # the short global name when it was linked, else the in-repo launcher
   step "${g}Done — the DFIR co-pilot is installed and working.${x}"
   cat <<EOF
 
   Try it:
-    ${b}./dfir-copilot query "how many failed password attempts are there?" copilot/sample/auth_sample.csv${x}
-    ${b}./dfir-copilot triage <(echo "services.exe -> cmd.exe -> powershell -enc ...")${x}
-    ${b}./dfir-copilot verify${x}
+    ${b}${CMD}${x}                                   # the cheat sheet
+    ${b}${CMD} query "how many failed password attempts are there?" copilot/sample/auth_sample.csv${x}
+    ${b}${CMD} triage <(echo "services.exe -> cmd.exe -> powershell -enc ...")${x}
+    ${b}${CMD} backends${x}
 
   The model drafts queries and narrates; the deterministic harness owns correctness;
   you approve before anything is acted on. See README.md for the full guide.

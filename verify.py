@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke tests run at the end of install.sh (and via `dfir-copilot verify`).
+"""Smoke tests run at the end of install.sh (and via `clue verify`).
 
 Proves the whole stack actually works end-to-end:
   1. dependencies import (mlx_lm, outlines, duckdb, llguidance)

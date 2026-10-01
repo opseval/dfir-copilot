@@ -1,8 +1,9 @@
 # DFIR Co-Pilot — Comprehensive User Guide
 
 A complete guide to installing, running, understanding, and extending the local DFIR co-pilot.
-If you just want to get going, the one-liner is `./install.sh` then `./dfir-copilot verify` — the
-rest of this document is here when you want depth.
+If you just want to get going, the one-liner is `./install.sh` then `clue verify` — the rest of this
+document is here when you want depth. Everything is `clue <command>`; `clue` on its own prints the
+cheat sheet, and `./dfir-copilot` inside the repo is the same program under its long name.
 
 **Contents**
 1. [What this is (and isn't)](#1-what-this-is-and-isnt)
@@ -85,28 +86,23 @@ present and installs only what's missing. **Re-running is always safe.**
 - Python packages: `mlx-lm`, `outlines` + `llguidance` (constrained decoding), `duckdb`,
   `huggingface_hub`.
 - The model in the standard Hugging Face cache (`~/.cache/huggingface`).
-- A launcher script `dfir-copilot/dfir-copilot`. If `~/.local/bin` is on your `PATH`, it's symlinked
-  there so you can run `dfir-copilot` from anywhere; otherwise you run `./dfir-copilot`.
+- The **`clue`** command: a launcher script (`dfir-copilot/dfir-copilot`) linked onto your `PATH` as
+  `clue` and, under its long name, `dfir-copilot` — into `~/.local/bin` if that is already on your
+  `PATH`, otherwise into Homebrew's bin directory (user-writable; no `sudo`, no shell-rc edits). It
+  never overwrites a command that is already there. `DFIR_ALIAS=` before `./install.sh` skips the
+  short name; `DFIR_ALIAS=yourname` picks another.
 
-**To call it from any directory yourself**, from the repo folder either add the repo to your `PATH`:
-
-```bash
-echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc   # zsh is the macOS default shell
-```
-
-or symlink the launcher into a directory already on your `PATH` (may prompt for `sudo`):
+**If the installer could not link it** (it tells you), link the launcher yourself into a directory on
+your `PATH` (may prompt for `sudo`); until then `./dfir-copilot` inside the repo is the same program:
 
 ```bash
-ln -sf "$PWD/dfir-copilot" /usr/local/bin/dfir-copilot
+[ -e /usr/local/bin/clue ] || sudo ln -s "$PWD/dfir-copilot" /usr/local/bin/clue
 ```
-
-After either, `dfir-copilot query "…" artifact.csv` works from anywhere. (This guide's examples use
-`./dfir-copilot`, which works from inside the repo.)
 
 ### 2.4 Verifying
 
 ```bash
-./dfir-copilot verify
+clue verify
 ```
 
 This runs the hard checks — dependencies import, DuckDB reads a sample artifact, deterministic triage
@@ -126,7 +122,7 @@ Use this when you have a **parsed/structured artifact as CSV** (a log converted 
 EZTools `.csv` export, a Plaso `psort` CSV) and a question.
 
 ```bash
-./dfir-copilot query "<your question>" <artifact.csv>
+clue query "<your question>" <artifact.csv>
 ```
 
 Two things can happen, and the output says which (`path: catalog` or `path: granite`):
@@ -149,9 +145,9 @@ Use this when you have **raw output from a forensic tool** and want a fast, dete
 whether it's interesting.
 
 ```bash
-<tool> ... | ./dfir-copilot triage
+<tool> ... | clue triage
 # or
-./dfir-copilot triage saved_output.txt
+clue triage saved_output.txt
 ```
 
 You get a verdict (`MALICIOUS` / `SUSPICIOUS` / `BENIGN` / `UNDETERMINED`), the priority finding and
@@ -164,9 +160,22 @@ comes from the rules).
 
 ## 4. Command reference
 
+Every command is `clue <command> …`. `clue` alone prints the cheat sheet; `clue <command> --help`
+prints that command's options.
+
 ### `query "<question>" <artifact.csv> [--backend auto|granite|afm] [--cross-check]`
 Answer a question over a CSV artifact with a verified, read-only DuckDB query.
-- **Input:** a natural-language question, and a path to a CSV file.
+- **Input:** a natural-language question and a path to a CSV file, question first. The file may
+  come first instead: when the second argument is a sentence (it contains a space, is not an
+  existing file, and is not path-like) and the first is a file or path-like, the two are swapped.
+  Path-like means it ends in a data-file extension (`.csv`, `.tsv`, `.txt`, `.log`, `.gz`, `.json`,
+  `.parquet` — spaces or not) or is a single token containing a `/`. In every other case the order
+  given stands — `clue query notes.csv typo.csv`, `clue query notes.csv count` and `clue query
+  notes.csv "missing artifact.csv"` all report the second argument as missing rather than guessing.
+  (The one thing this cannot catch: a file given second that is mistyped, contains a space *and* has
+  no data-file extension; it would be read as the question, which the first lines of the output show.)
+  The artifact must be an existing file or a glob pattern such as `logs/*.csv`; a typo or a directory
+  is reported immediately, before any model loads.
 - **Output:** the path taken (`catalog` or `granite`), the SQL, the executed result, a `meaning:` line
   (catalog path) and the agreement (`2/2 router votes`, or the Granite self-consistency vote `4/5`).
 - **`--backend`:** `auto` (default: Apple router first, Granite for everything else), `granite`
@@ -184,7 +193,7 @@ as written, which is what the triage detectors need — a language model "readin
 paraphrase them. It is best-effort OCR all the same (a blurry photo can drop or swap a character), so
 read the text before relying on a verdict built on it. Phone photos are read the way they display
 (EXIF orientation is honoured); `-o` refuses to overwrite the input image. Typical use:
-`./dfir-copilot ocr shot.png | ./dfir-copilot triage`. Needs macOS (the `pyobjc-framework-Vision`
+`clue ocr shot.png | clue triage`. Needs macOS (the `pyobjc-framework-Vision`
 binding is installed by `install.sh`); elsewhere it explains why it can't run.
 
 ### `backends`
@@ -222,10 +231,10 @@ Run a dockerized forensic tool against artifacts in the current directory (mount
 You have an `OpenSSH` auth log parsed to CSV (columns like `Content`, `EventId`, `Time`).
 
 ```bash
-./dfir-copilot query "how many failed password attempts are there?" auth.csv
-./dfir-copilot query "which single source IP has the most events, and how many?" auth.csv
-./dfir-copilot query "how many distinct usernames were tried in invalid-user attempts?" auth.csv
-./dfir-copilot query "how many lines were flagged as POSSIBLE BREAK-IN ATTEMPT?" auth.csv
+clue query "how many failed password attempts are there?" auth.csv
+clue query "which single source IP has the most events, and how many?" auth.csv
+clue query "how many distinct usernames were tried in invalid-user attempts?" auth.csv
+clue query "how many lines were flagged as POSSIBLE BREAK-IN ATTEMPT?" auth.csv
 ```
 
 Each prints the SQL it used (e.g. `... WHERE Content LIKE '%Failed password%'`) so you can confirm it
@@ -235,14 +244,14 @@ matched what you meant before you put the number in a report. The top-IP result 
 
 ```bash
 # draft + approve the command, then run it (read-only mount)
-./dfir-copilot tools vol3 -f /data/mem.raw windows.malfind | ./dfir-copilot triage
+clue tools vol3 -f /data/mem.raw windows.malfind | clue triage
 ```
 
 If `malfind` shows an RWX region inside `lsass.exe`, triage returns `MALICIOUS`, names the indicator,
 and suggests dumping the region and pivoting to `windows.netscan`/`windows.pstree`. Run those next:
 
 ```bash
-./dfir-copilot tools vol3 -f /data/mem.raw windows.pstree | ./dfir-copilot triage
+clue tools vol3 -f /data/mem.raw windows.pstree | clue triage
 ```
 
 ### 5.2b A photo of a screen
@@ -251,7 +260,7 @@ An analyst sends you a phone photo of a locked workstation's console, or pastes 
 ticket. Transcribe it and triage the text exactly as you would the tool's own output:
 
 ```bash
-./dfir-copilot ocr console_photo.jpg | ./dfir-copilot triage
+clue ocr console_photo.jpg | clue triage
 ```
 
 No language model touches the text, so nothing is paraphrased or invented — but it is OCR: read it
@@ -260,11 +269,17 @@ before you trust a verdict on it (a blurry photo can drop or swap a character in
 ### 5.3 Timeline pivot with Plaso
 
 ```bash
-./dfir-copilot tools plaso log2timeline.py --storage-file /data/case.plaso /data/image.E01
-./dfir-copilot tools plaso psort.py -o dynamic -w /data/timeline.csv /data/case.plaso
+clue tools plaso log2timeline.py --storage-file /out/case.plaso /data/image.E01
+clue tools plaso psort.py -o dynamic -w /out/timeline.csv /out/case.plaso
 # now ask questions of the timeline as a CSV artifact
-./dfir-copilot query "how many events occurred between the first and last logon?" timeline.csv
+clue query "how many events occurred between the first and last logon?" out/timeline.csv
 ```
+
+Evidence is mounted read-only at `/data`. Anything a tool writes goes to `/out`: by default that is
+`./out` on the host, created and mounted only when a command names `/out` (a path such as
+`/data/outlook.pst` does not count); if you set `DFIR_OUT=/path`, that directory is created and
+mounted on every `clue tools` run instead — never the evidence directory itself or a parent of it,
+which is refused.
 
 The pattern is always: **co-pilot drafts → you approve → tool runs read-only → feed the output back
 to triage or query.**
@@ -368,10 +383,14 @@ present, the installer installs and starts Colima (with Rosetta on Apple Silicon
 
 ```bash
 cd /path/to/case/artifacts
-../dfir-copilot tools list                       # see configured tools + images
-../dfir-copilot tools vol3 -f /data/mem.raw windows.pstree
-../dfir-copilot tools plaso psort.py -o dynamic -w /data/timeline.csv /data/case.plaso
+clue tools list                       # see configured tools + images
+clue tools vol3 -f /data/mem.raw windows.pstree
+clue tools plaso psort.py -o dynamic -w /out/timeline.csv /out/case.plaso   # outputs land in ./out
 ```
+
+Tools cannot write under `/data`. Anything they produce goes to `/out`: `./out` on the host, created
+and mounted only when a command names `/out` — or, with `DFIR_OUT=/path` set, that directory on
+every run (never the evidence directory or a parent of it; that is refused).
 
 - **EZTools and REMnux are amd64.** On Apple Silicon they run via Rosetta 2 (installed by
   `--with-tools`) and are slower but functional.
@@ -443,6 +462,7 @@ Set these as environment variables before running (all optional):
 | `DFIR_ROUTER_VOTES` | `2` | routing votes that must agree (greedy + sampled) |
 | `DFIR_NARRATE_MAX_CHARS` | `6000` | tool-output budget in the narration prompt |
 | `DFIR_IMG_VOL3` / `DFIR_IMG_PLASO` / `DFIR_IMG_REMNUX` | see `tools/dfir-tools.sh` | override tool images |
+| `DFIR_OUT` | unset (`./out`, only when a command names `/out`) | host directory mounted writable at `/out` for tool output; when set, mounted on every `clue tools` run; never the evidence directory or a parent of it |
 
 ---
 
@@ -497,8 +517,10 @@ the repo directory.**
 # 1. the virtualenv and the launcher (created by install.sh)
 rm -rf .venv dfir-copilot
 
-# 2. any PATH symlinks (the installer makes the ~/.local/bin one; you may have made the other)
-rm -f ~/.local/bin/dfir-copilot /usr/local/bin/dfir-copilot
+# 2. the PATH links -- only symlinks that point at THIS repo's launcher are removed, whatever their names
+for d in ~/.local/bin "$(brew --prefix 2>/dev/null || echo /nonexistent)/bin" /usr/local/bin; do
+  for f in "$d"/*; do [ -L "$f" ] && [ "$(readlink "$f")" = "$PWD/dfir-copilot" ] && rm "$f"; done
+done
 
 # 3. the downloaded model (~2.6 GB) from the shared Hugging Face cache
 rm -rf ~/.cache/huggingface/hub/models--mlx-community--granite-4.1-3b-mxfp4

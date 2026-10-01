@@ -20,7 +20,7 @@ and put the intelligence in the harness, not the weights.
 ```
 
 That's it. On a **fresh** Mac it installs Homebrew, Python, the dependencies, downloads the model
-(~2.6 GB), wires up the `dfir-copilot` command, and runs a self-test. On an **existing** Mac it
+(~2.6 GB), wires up the `clue` command, and runs a self-test. On an **existing** Mac it
 detects what you already have and installs only what's missing. Safe to re-run.
 
 Add the dockerized forensic tools (Volatility 3, Plaso, …) when you want them:
@@ -32,24 +32,32 @@ Add the dockerized forensic tools (Volatility 3, Plaso, …) when you want them:
 Other flags: `--no-model` (wire everything but skip the download), `--quick-verify` (skip the slow
 end-to-end model test). Run `./install.sh --help` for the list.
 
-### Run it from anywhere (optional)
+### The `clue` command
 
-The installer drops a `dfir-copilot` launcher in the repo. If `~/.local/bin` is already on your
-`PATH`, it's symlinked there automatically and you can just type `dfir-copilot` from any directory.
-Otherwise, **from the repo directory**, add it to your `PATH` once (zsh is the macOS default shell):
+The installer puts one command on your `PATH`: **`clue`** (and `dfir-copilot`, the same program under
+its long name). It links into `~/.local/bin` if that is already on your `PATH`, otherwise into
+Homebrew's bin directory — no `sudo`, no shell-rc edits — and never overwrites a command that is
+already there. Type `clue` on its own for the cheat sheet:
 
-```bash
-echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
+```
+  clue query "<question>" <artifact.csv>     ask a plain-English question of a CSV artifact
+                                             (the file may come first; the SQL is shown for approval)
+  <tool> ... | clue triage                    verdict + findings from tool output (deterministic, no model)
+  clue narrate <output.txt>                  the verdict plus a short grounded summary
+  clue ocr <screenshot.png> | clue triage    transcribe a screenshot or photo of tool output, then triage it
+  clue backends                              what this Mac can use (Apple on-device model, Granite)
+  clue verify                                self-test the install
+  clue tools vol3|plaso|remnux ...           run a dockerized forensic tool read-only (after --with-tools)
 ```
 
-…or symlink the launcher into a directory already on your `PATH` (may prompt for `sudo`):
+If the installer could not link it (it says so), link the launcher yourself into a directory on your
+`PATH` (may prompt for `sudo`); until then `./dfir-copilot` inside the repo is the same program:
 
 ```bash
-ln -sf "$PWD/dfir-copilot" /usr/local/bin/dfir-copilot
+[ -e /usr/local/bin/clue ] || sudo ln -s "$PWD/dfir-copilot" /usr/local/bin/clue
 ```
 
-After either, `dfir-copilot query "…" artifact.csv` works from anywhere. The `./dfir-copilot` examples
-below also work as-is from inside the repo.
+(`DFIR_ALIAS=` before `./install.sh` skips the short name; `DFIR_ALIAS=yourname` picks another.)
 
 > New here? The **[comprehensive user guide](USER_GUIDE.md)** covers everything — installation
 > details, every command, end-to-end investigation walkthroughs, how it decides things, how to
@@ -65,21 +73,21 @@ anything else goes to Granite, which writes the SQL under a grammar; either way 
 shows you the result and the query to approve):
 
 ```bash
-./dfir-copilot query "how many failed password attempts are there?" copilot/sample/auth_sample.csv
-./dfir-copilot query "which single source IP has the most events?" auth.csv --cross-check   # both paths, flag disagreement
-./dfir-copilot backends                                                                     # which models this Mac can use
+clue query "how many failed password attempts are there?" copilot/sample/auth_sample.csv
+clue query "which single source IP has the most events?" auth.csv --cross-check   # both paths, flag disagreement
+clue backends                                                                     # which models this Mac can use
 ```
 
 **Triage tool output** (deterministic verdict + findings + suggested next commands — no model needed):
 
 ```bash
-volatility3 -f mem.raw windows.malfind | ./dfir-copilot triage
+volatility3 -f mem.raw windows.malfind | clue triage
 ```
 
 **Triage with an optional grounded summary** from the model (the verdict above is still authoritative):
 
 ```bash
-./dfir-copilot narrate suspicious_output.txt
+clue narrate suspicious_output.txt
 ```
 
 **Triage a screenshot or photo of tool output** (a console someone photographed, a screenshot pasted into
@@ -88,19 +96,23 @@ blobs come through as written rather than paraphrased — and the text goes into
 read the transcription before relying on a verdict built on it.
 
 ```bash
-./dfir-copilot ocr screenshot.png | ./dfir-copilot triage
+clue ocr screenshot.png | clue triage
 ```
 
 **Run a forensic tool** the co-pilot drafted a command for (after `--with-tools`):
 
 ```bash
-./dfir-copilot tools vol3 -f /data/mem.raw windows.pstree
+clue tools vol3 -f /data/mem.raw windows.pstree
 ```
+
+Evidence is mounted read-only at `/data`. Anything a tool writes goes to `/out`: `./out` on the host,
+created only when a command names `/out` — or, with `DFIR_OUT=/path` set, that directory on every run
+(never the evidence directory itself or a parent of it).
 
 **Re-check everything works:**
 
 ```bash
-./dfir-copilot verify
+clue verify
 ```
 
 ---
@@ -127,7 +139,7 @@ Two concrete jobs, matching the two modes above:
 ## How it works (the short version)
 
 ```
-  you ──▶ dfir-copilot
+  you ──▶ clue
               │
               │   QUERY path
               │     ├─ artifact family: deterministic (header fingerprint + the words actually in the data)
@@ -199,7 +211,7 @@ Most of these are deliberate consequences of the "structure beats weights" desig
 - **Scope is single, structured artifacts.** Query mode works on one CSV-shaped artifact at a time; it does not correlate across many sources for you, build the timeline itself, or do dynamic / malware-detonation analysis.
 - **It only ever advises; a human must act.** Every tool command is proposed for approval and run by the analyst; nothing executes autonomously.
 - **Operational limits.** Apple-Silicon Macs (via MLX); Granite loads once per session (~30–60 s on the first call, fast thereafter) and peaks ~2.75 GB of memory, so watch your RAM if you run other large local models alongside the forensic tools. A routed question does not load it; a declined route or `--cross-check` does.
-- **Apple's model is optional and can change under you.** The routed path needs macOS 27 with Apple Intelligence on; a managed Mac may have it switched off, and the model updates with the OS rather than being pinned like Granite — so every routed answer records the OS build it came from, and `dfir-copilot backends` shows what is active. The `fm` tool's terms tie its use to the macOS licence; read them once (`fm license`). Without it, everything still works through Granite.
+- **Apple's model is optional and can change under you.** The routed path needs macOS 27 with Apple Intelligence on; a managed Mac may have it switched off, and the model updates with the OS rather than being pinned like Granite — so every routed answer records the OS build it came from, and `clue backends` shows what is active. The `fm` tool's terms tie its use to the macOS licence; read them once (`fm license`). Without it, everything still works through Granite.
 - **Coverage is an ongoing curation commitment.** Because the intelligence lives in editable files (the dictionary and detectors), the system is only as good as the team keeps them current — transparent and **$0** to extend, but a continuing *human* responsibility, not something the model improves on its own.
 
 ---
@@ -235,8 +247,9 @@ The co-pilot is self-contained — it installs into its own virtualenv and the s
 never touches your system Python. To remove it cleanly, **from inside the repo**:
 
 ```bash
+for d in ~/.local/bin "$(brew --prefix 2>/dev/null || echo /nonexistent)/bin" /usr/local/bin; do   # only OUR links
+  for f in "$d"/*; do [ -L "$f" ] && [ "$(readlink "$f")" = "$PWD/dfir-copilot" ] && rm "$f"; done; done
 rm -rf .venv dfir-copilot                                     # virtualenv + launcher
-rm -f  ~/.local/bin/dfir-copilot /usr/local/bin/dfir-copilot  # any PATH symlinks
 rm -rf ~/.cache/huggingface/hub/models--mlx-community--granite-4.1-3b-mxfp4   # the model (~2.6 GB)
 ```
 
